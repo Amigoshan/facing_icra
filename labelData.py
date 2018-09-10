@@ -52,18 +52,18 @@ if __name__=='__main__':
 
     dataloader = DataLoader(labeldataset, batch_size=16, shuffle=True, num_workers=1)
 
-    datalist=[0,69679,69680,69680*2-1,69680*2,364785,364786]
-    for k in datalist:
-        sample = labeldataset[k]
-        img = sample['img']
-        label = sample['label']
-        print img.dtype, label
-        print np.max(img), np.min(img), np.mean(img)
-        print img.shape
-        img = img_denormalize(img)
-        img = put_arrow(img, label)
-        cv2.imshow('img',img)
-        cv2.waitKey(0)
+    # # datalist=[0,69679,69680,69680*2-1,69680*2,364785,364786]
+    # for k in dataloader:
+    #     sample = labeldataset[k]
+    #     img = sample['img']
+    #     label = sample['label']
+    #     print img.dtype, label
+    #     print np.max(img), np.min(img), np.mean(img)
+    #     print img.shape
+    #     img = img_denormalize(img)
+    #     img = put_arrow(img, label)
+    #     cv2.imshow('img',img)
+    #     cv2.waitKey(0)
 
 
     dataiter = iter(dataloader)

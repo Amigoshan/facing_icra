@@ -11,28 +11,44 @@ from utils import im_scale_norm_pad, img_denormalize, seq_show, im_hsv_augmentat
 import random
 import matplotlib.pyplot as plt
 
+import pickle
 
 class FolderUnlabelDataset(Dataset):
 
-    def __init__(self, imgdir='/datasets/dirimg/',
+    def __init__(self, imgdir='/datadrive/person/dirimg/',
                         imgsize = 192, batch = 32, 
-                        data_aug=False,
-                        mean=[0,0,0],std=[1,1,1]):
+                        data_aug=False, extend=False,
+                        mean=[0,0,0],std=[1,1,1], 
+                        include_all=False, datafile=''):
 
         self.imgsize = imgsize
         self.imgnamelist = []
-        # self.fileprefix = 'drone_'
         self.batch = batch
         self.aug = data_aug
         self.mean = mean
         self.std = std
         self.episodeNum = []
 
-        self.folderlist = listdir(imgdir)
+        if datafile != '':
+            with open(datafile, 'rb') as f:
+                data = pickle.load(f)
+            self.N = data['N']
+            self.episodeNum = data['episodeNum']
+            self.imgnamelist = data['imgnamelist']
+            return
+
+        self.folderlist = ['4','7','11','17','23','30','32','33','37','38','49','50','52']
+        if extend:
+            for k in range(101,1040):
+                self.folderlist.append(str(k))
+
+        if include_all: # include all the folders in one directory -- for duke
+            self.folderlist = listdir(imgdir)
 
         for f_ind, foldername in enumerate(self.folderlist):
 
             folderpath = join(imgdir, foldername)
+
             imglist = listdir(folderpath)
             imglist = sorted(imglist)
 
@@ -42,6 +58,13 @@ class FolderUnlabelDataset(Dataset):
             for filename in imglist:
                 if filename.split('.')[-1]!='jpg': # only process jpg file
                     continue
+
+                if include_all: # for duke dataset
+                    filepathname = join(folderpath, filename)
+                    sequencelist.append(filepathname)
+                    continue
+
+                # filtering the incontineous data
                 fileind = filename.split('.')[0].split('_')[-1]
                 try:
                     fileind = int(fileind)
@@ -84,8 +107,13 @@ class FolderUnlabelDataset(Dataset):
             total_seq_num += len(sequ) - batch + 1
             self.episodeNum.append(total_seq_num)
         self.N = total_seq_num
-        # print total_seq_num
-        # print self.episodeNum
+
+        # save self.N, self.episodeNum, self.imgnamelist 
+        # for faster loading
+        # import ipdb; ipdb.set_trace()
+        if datafile == '':
+            with open('unlabeldata.pkl', 'wb') as f:
+                pickle.dump({'N':self.N, 'episodeNum': self.episodeNum, 'imgnamelist': self.imgnamelist}, f, pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
         return self.N
@@ -116,20 +144,21 @@ class FolderUnlabelDataset(Dataset):
 if __name__=='__main__':
     # test 
     np.set_printoptions(precision=4)
-    folderUnlabelDataset = FolderUnlabelDataset(batch=24, data_aug=True, extend=True)
+
+    unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 32, data_aug=True, include_all=True,datafile='duke_unlabeldata.pkl')
+    # unlabelset = FolderUnlabelDataset(batch=24, data_aug=True, extend=True, datafile='drone_ucf_unlabeldata.pkl')
+    # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 24, data_aug=True, include_all=True)
+    print len(unlabelset)
     for k in range(1):
-        imgseq = folderUnlabelDataset[k*1000]
+        imgseq = unlabelset[k*1000]
         print imgseq.dtype, imgseq.shape
         seq_show(imgseq, scale=0.8)
-        # cv2.imshow('img',folderUnlabelDataset.img_denormalize(imgseq[5,:,:,:]))
-        # cv2.waitKey(0)
 
-    dataloader = DataLoader(folderUnlabelDataset, batch_size=1, shuffle=True, num_workers=1)
+    dataloader = DataLoader(unlabelset, batch_size=1, shuffle=True, num_workers=1)
 
     dataiter = iter(dataloader)
    
     while True:
-
 
         try:
             sample = dataiter.next()
