@@ -26,7 +26,7 @@ Thresh = 0.005
 
 
 Snapshot = 5000 # do a snapshot every Snapshot steps
-TestIter = 50 # do a testing every TestIter steps
+TestIter = 100 # do a testing every TestIter steps
 ShowIter = 50 # print to screen
 
 datasetdir = '/datadrive/datasets'
@@ -51,6 +51,7 @@ class MyWF(WorkFlow.WorkFlow):
         self.logger.info(logstr) 
 
         self.countEpoch = 0
+        self.unlabelEpoch = 0
         self.countTrain = 0
         self.device = 'cuda'
 
@@ -69,18 +70,19 @@ class MyWF(WorkFlow.WorkFlow):
         self.model = MobileReg()
         if LoadPreMobile:
             self.model.load_pretrained_pth(pre_mobile_model)
-        self.optimizer = optim.SGD(self.model.parameters(), lr=Lr)
-        self.criterion = nn.NLLLoss() 
+        self.optimizer = optim.Adam(self.model.parameters(), lr=Lr)
+        self.criterion = nn.MSELoss()
 
-        self.AV['loss'].avgWidth = 10 # there's a default plotter for 'loss'
-        self.add_accumulated_value('accuracy', 10) # second param is the number of average data
-        self.add_accumulated_value('test') 
-        self.add_accumulated_value('test_accuracy')
+        self.AV['loss'].avgWidth = 100 # there's a default plotter for 'loss'
+        self.add_accumulated_value('label_loss', 100) # second param is the number of average data
+        self.add_accumulated_value('unlabel_loss', 100) 
+        self.add_accumulated_value('test_loss')
+        self.add_accumulated_value('test_label')
+        self.add_accumulated_value('test_unlabel')
 
-        self.AVP.append(WorkFlow.VisdomLinePlotter("train_loss", self.AV, ['loss'], [False])) # False: no average line
-        self.AVP.append(WorkFlow.VisdomLinePlotter("test_loss", self.AV, ['test'], [False]))
-        self.AVP.append(WorkFlow.VisdomLinePlotter("train_test_accuracy", self.AV, ['accuracy', 'test_accuracy'], [True, False]))
-        self.AVP.append(WorkFlow.VisdomLinePlotter("train_test_loss", self.AV, ['loss', 'test'], [True, False]))
+        self.AVP.append(WorkFlow.VisdomLinePlotter("total_loss", self.AV, ['loss', 'test_loss'], [True, False])) # False: no average line
+        self.AVP.append(WorkFlow.VisdomLinePlotter("label_loss", self.AV, ['label_loss', 'test_label'], [True, False]))
+        self.AVP.append(WorkFlow.VisdomLinePlotter("unlabel_loss", self.AV, ['unlabel_loss', 'test_unlabel'], [True, False]))
 
     def initialize(self, device):
         super(MyWF, self).initialize()
@@ -89,6 +91,61 @@ class MyWF(WorkFlow.WorkFlow):
         self.logger.info("Initialized.")
         self.device = device
         self.model.to(device)
+
+    def unlabel_loss(self, output_unlabel):
+        loss_unlabel = torch.Tensor([0]).to(self.device)
+        unlabel_batch = output_unlabel.size()[0]
+        for ind1 in range(unlabel_batch-5): # try to make every sample contribute
+            # randomly pick two other samples
+            ind2 = random.randint(ind1+2, unlabel_batch-1) # big distance
+            ind3 = random.randint(ind1+1, ind2-1) # small distance
+
+            # target1 = Variable(x_encode[ind2,:].data, requires_grad=False).cuda()
+            # target2 = Variable(x_encode[ind3,:].data, requires_grad=False).cuda()
+            # diff_big = criterion(x_encode[ind1,:], target1) #(output_unlabel[ind1]-output_unlabel[ind2])*(output_unlabel[ind1]-output_unlabel[ind2])
+            diff_big = (output_unlabel[ind1]-output_unlabel[ind2])*(output_unlabel[ind1]-output_unlabel[ind2])
+            diff_big = diff_big.sum()/2.0
+            # diff_small = criterion(x_encode[ind1,:], target2) #(output_unlabel[ind1]-output_unlabel[ind3])*(output_unlabel[ind1]-output_unlabel[ind3])
+            diff_small = (output_unlabel[ind1]-output_unlabel[ind3])*(output_unlabel[ind1]-output_unlabel[ind3])
+            diff_small = diff_small.sum()/2.0
+            # import ipdb; ipdb.set_trace()
+            loss_unlabel = loss_unlabel + (diff_small-Thresh-diff_big).clamp(0)
+        return loss_unlabel
+
+
+    def forward_unlabel(self, sample):
+
+        # unlabeled data
+        inputValue = sample.squeeze().to(self.device)
+        output = self.model(inputValue)
+        loss_unlabel = self.unlabel_loss(output)
+
+        return loss_unlabel
+
+
+    def forward_label(self, sample):
+
+        # labeled data
+        inputValue = sample['img'].to(self.device)
+        targetValue = sample['label'].to(self.device)
+
+        # forward + backward + optimize
+        output = self.model(inputValue)
+        loss_label = self.criterion(output, targetValue)
+
+        return loss_label
+
+
+    def test_label_unlabel(val_sample, net, criterion):
+        inputImgs = val_sample['imgseq'].squeeze().to(self.device)
+        labels = val_sample['labelseq'].squeeze().to(self.device)
+
+        output = self.model(inputImgs)
+        loss_label = self.criterion(output, labels)
+        loss_unlabel = self.unlabel_loss(output)
+        loss = loss_label + Lamb * loss_unlabel
+
+        return loss, loss_label, loss_unlabel 
 
 
     def train(self):
@@ -99,27 +156,35 @@ class MyWF(WorkFlow.WorkFlow):
         self.model.train()
 
         try:
-            (data, target) = self.train_data_iter.next()
+            sample = self.train_data_iter.next()
         except:
             self.train_data_iter = iter(self.train_loader)
-            (data, target) = self.train_data_iter.next()
+            sample = self.train_data_iter.next()
             self.countEpoch += 1
 
-        data, target = data.to(self.device), target.to(self.device)
+        try:
+            sample_unlabel = self.train_unlabeld_iter.next()
+        except:
+            self.train_unlabeld_iter = iter(self.train_unlabeld_loader)
+            sample_unlabel = self.train_unlabeld_iter.next()
+            self.unlabelEpoch += 1
+
         self.optimizer.zero_grad()
-        output = self.model(data)
-        loss = self.criterion(output, target)
+        label_loss = self.forward_label(sample)
+        unlabel_loss = self.forward_unlabel(sample_unlabel)
+        loss = label_loss + Lamb * unlabel_loss
         loss.backward()
         self.optimizer.step()
-        accuracy = self.get_accuracy(output, target)
 
         # print and visualization
         self.AV['loss'].push_back(loss.item())
-        self.AV['accuracy'].push_back(accuracy)
+        self.AV['label_loss'].push_back(label_loss.item())
+        self.AV['unlabel_loss'].push_back(unlabel_loss.item())
+
         if self.countTrain % ShowIter == 0:
             losslogstr = self.get_log_str()
-            self.logger.info("%s #%d - %s lr: %.6f" % (exp_prefix[:-1], 
-                self.countTrain, losslogstr, Lr))
+            self.logger.info("%s #%d - (%d %d) %s lr: %.6f" % (exp_prefix[:-1], 
+                self.countTrain, self.countEpoch, self.unlabelEpoch, losslogstr, Lr))
 
         if ( self.countTrain % Snapshot == 0 ):
             self.write_accumulated_values()
@@ -132,18 +197,16 @@ class MyWF(WorkFlow.WorkFlow):
         self.model.eval()
 
         try:
-            (data, target) = self.test_data_iter.next()
+            sample = self.test_data_iter.next()
         except:
             self.test_data_iter = iter(self.test_loader)
-            (data, target) = self.test_data_iter.next()
+            sample = self.test_data_iter.next()
 
-        data, target = data.to(self.device), target.to(self.device)
-        output = self.model(data)
-        test_loss = self.criterion(output, target).item() # sum up batch loss
-        accuracy = self.get_accuracy(output, target)
+        loss, loss_label, loss_unlabel = self.test_label_unlabel(sample)
 
-        self.AV['test'].push_back(test_loss, self.countTrain)
-        self.AV['test_accuracy'].push_back(accuracy, self.countTrain)
+        self.AV['test_loss'].push_back(loss.item())
+        self.AV['test_label'].push_back(label_loss.item())
+        self.AV['test_unlabel'].push_back(unlabel_loss.item())
 
     def finalize(self):
         super(MyWF, self).finalize()
@@ -152,11 +215,6 @@ class MyWF(WorkFlow.WorkFlow):
         self.draw_accumulated_values()
         self.save_model(self.model, saveModelName+'_'+str(self.countTrain))
 
-
-    def get_accuracy(self, output, target):
-        pred = output.max(1, keepdim=True)[1] # get the index of the max log-probability
-        correct = pred.eq(target.view_as(pred)).sum().item()
-        return float(correct)/output.size()[0]
 
     def load_model(self, model, modelname):
         preTrainDict = torch.load(modelname)
