@@ -146,7 +146,7 @@ if __name__=='__main__':
     # test 
     np.set_printoptions(precision=4)
 
-    unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 32, data_aug=True, include_all=True,datafile='duke_unlabeldata.pkl')
+    unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 32, data_aug=True, include_all=True)#,datafile='duke_unlabeldata.pkl')
     # unlabelset = FolderUnlabelDataset(batch=24, data_aug=True, extend=True, datafile='drone_ucf_unlabeldata.pkl')
     # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 24, data_aug=True, include_all=True)
     print len(unlabelset)

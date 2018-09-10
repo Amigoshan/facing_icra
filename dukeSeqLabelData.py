@@ -38,6 +38,7 @@ class DukeSeqLabelDataset(Dataset):
             lines = f.readlines()
 
         lastind = -1
+        lastcam = -1
         for line in lines:
             [img_name, angle] = line.strip().split(' ')
             frameid = img_name.strip().split('_')[2][5:]
@@ -48,10 +49,13 @@ class DukeSeqLabelDataset(Dataset):
                 continue
 
             filepathname = join(imgdir, img_name)
+            camnum = img_name.strip().split('_')[0]
 
-            if lastind<0 or frameid==lastind+frame_iter:
+            # import ipdb; ipdb.set_trace()
+            if (lastind<0 or frameid==lastind+frame_iter) and (camnum==lastcam or lastcam==-1):
                 sequencelist.append((filepathname,angle))
                 lastind = frameid
+                lastcam = camnum
             else: # the index is not continuous
                 if len(sequencelist)>=batch:
                     self.imgnamelist.append(sequencelist)
@@ -60,6 +64,7 @@ class DukeSeqLabelDataset(Dataset):
                 else:
                     print 'sequence too short'
                 lastind = -1
+                lastcam = -1
 
 
         sequencenum = len(self.imgnamelist)
@@ -105,6 +110,30 @@ class DukeSeqLabelDataset(Dataset):
 
         return {'imgseq': np.array(imgseq), 'labelseq':np.array(labelseq)}
 
+def unlabelloss(labelseq):
+    thresh = 0.005
+    unlabel_batch = labelseq.shape[0]
+    loss_unlabel = 0
+    for ind1 in range(unlabel_batch-5): # try to make every sample contribute
+        # randomly pick two other samples
+        ind2 = random.randint(ind1+2, unlabel_batch-1) # big distance
+        ind3 = random.randint(ind1+1, ind2-1) # small distance
+
+        # target1 = Variable(x_encode[ind2,:].data, requires_grad=False).cuda()
+        # target2 = Variable(x_encode[ind3,:].data, requires_grad=False).cuda()
+        # diff_big = criterion(x_encode[ind1,:], target1) #(labelseq[ind1]-labelseq[ind2])*(labelseq[ind1]-labelseq[ind2])
+        diff_big = (labelseq[ind1]-labelseq[ind2])*(labelseq[ind1]-labelseq[ind2])
+        diff_big = diff_big.sum()/2.0
+        # diff_small = criterion(x_encode[ind1,:], target2) #(labelseq[ind1]-labelseq[ind3])*(labelseq[ind1]-labelseq[ind3])
+        diff_small = (labelseq[ind1]-labelseq[ind3])*(labelseq[ind1]-labelseq[ind3])
+        diff_small = diff_small.sum()/2.0
+        # import ipdb; ipdb.set_trace()
+        cost = max(diff_small-thresh-diff_big, 0)
+        # print diff_big, diff_small, cost
+        loss_unlabel = loss_unlabel + cost
+    print loss_unlabel
+
+
 if __name__=='__main__':
     # test 
     np.set_printoptions(precision=4)
@@ -113,13 +142,13 @@ if __name__=='__main__':
     unlabelset = DukeSeqLabelDataset(batch=24, data_aug=True)
     # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 24, data_aug=True, include_all=True)
     print len(unlabelset)
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
 
-    for k in range(10):
-        sample = unlabelset[k*1000]
-        imgseq, labelseq = sample['imgseq'], sample['labelseq']
-        print imgseq.dtype, imgseq.shape
-        seq_show_with_arrow(imgseq,labelseq, scale=0.8)
+    # for k in range(10):
+    #     sample = unlabelset[k*1000]
+    #     imgseq, labelseq = sample['imgseq'], sample['labelseq']
+    #     print imgseq.dtype, imgseq.shape
+    #     seq_show_with_arrow(imgseq,labelseq, scale=0.8)
 
     dataloader = DataLoader(unlabelset, batch_size=1, shuffle=True, num_workers=1)
 
@@ -133,6 +162,8 @@ if __name__=='__main__':
             dataiter = iter(dataloader)
             sample = dataiter.next()
 
-        imgseq, labelseq = sample['imgseq'], sample['labelseq']
-        seq_show_with_arrow(imgseq.squeeze().numpy(), labelseq.squeeze().numpy(), scale=0.8)
-          
+        imgseq, labelseq = sample['imgseq'].squeeze().numpy(), sample['labelseq'].squeeze().numpy()
+        unlabelloss(labelseq)
+        fakelabel = np.random.rand(24,2)
+        unlabelloss(fakelabel)
+        seq_show_with_arrow(imgseq, labelseq, scale=0.8)

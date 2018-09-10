@@ -28,7 +28,7 @@ class TrackingLabelDataset(Dataset):
             self.items = pd.read_csv(filename)
         else: # text file used by DukeMTMC dataset
             imgdir = split(filename)[0]
-            imgdir = join(imgdir,'heading') # a subdirectory containing the images
+            # imgdir = join(imgdir,'heading') # a subdirectory containing the images
             with open(filename,'r') as f:
                 lines = f.readlines()
             for line in lines:

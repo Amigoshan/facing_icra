@@ -1,3 +1,5 @@
+# Combine two labeled dataset together
+
 from trackingLabelData import TrackingLabelDataset
 from torch.utils.data import Dataset, DataLoader
 from utils import im_scale_norm_pad, img_denormalize, seq_show, im_crop, im_hsv_augmentation, put_arrow, seq_show_with_arrow
@@ -10,7 +12,7 @@ class LabelDataset(Dataset):
 
         self.datasetlist = []
         virat = TrackingLabelDataset(data_aug = True, maxscale=0.1) # 69680
-        duke = TrackingLabelDataset(filename='/datadrive/person/DukeMTMC/trainval_duke.txt', data_aug=True) # 225426
+        duke = TrackingLabelDataset(filename='trainval_duke.txt', data_aug=True) # 225426
 
         self.datasetlist.append(virat)
         self.datasetlist.append(duke)
