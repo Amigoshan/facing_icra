@@ -1,1 +1,4 @@
 *.pyc
+logdata
+models
+resimg

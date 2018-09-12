@@ -140,7 +140,7 @@ def im_crop(image, maxscale=0.2):
     endy = int(imgshape[0]-random.random()*maxscale*imgshape[0])
     return image[starty:endy,startx:endx,:]
 
-def im_scale_norm_pad(img, outsize=192, mean=[0,0,0], std=[1,1,1], down_reso=False, down_len=30):
+def im_scale_norm_pad(img, outsize=192, mean=[0,0,0], std=[1,1,1], down_reso=False, down_len=30, flip=False):
     # downsample the image for data augmentation
     minlen = np.min(img.shape[0:2])
     down_len = random.randint(down_len,down_len*5)
@@ -149,7 +149,7 @@ def im_scale_norm_pad(img, outsize=192, mean=[0,0,0], std=[1,1,1], down_reso=Fal
         img = cv2.resize(img, (0,0), fx = resize_scale, fy = resize_scale)
 
     resize_scale = float(outsize)/np.max(img.shape)
-    # if the image is too 
+    # if the image is too narrow, make it more square 
     miniscale = 1.8
     x_scale, y_scale = resize_scale, resize_scale
     if img.shape[0] * resize_scale < outsize/miniscale:
@@ -158,6 +158,10 @@ def im_scale_norm_pad(img, outsize=192, mean=[0,0,0], std=[1,1,1], down_reso=Fal
         x_scale = outsize/miniscale/img.shape[1]
    
     img = cv2.resize(img, (0,0), fx = x_scale, fy = y_scale)
+
+    if flip:
+        img = np.fliplr(img)
+
     img = img_normalize(img, mean=mean, std=std)
     # print img.shape
     imgw = img.shape[2]

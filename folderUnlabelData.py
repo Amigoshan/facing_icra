@@ -37,7 +37,8 @@ class FolderUnlabelDataset(Dataset):
             self.imgnamelist = data['imgnamelist']
             return
 
-        self.folderlist = ['4','7','11','17','23','30','32','33','37','38','49','50','52']
+        # self.folderlist = ['4','7','11','17','23','30','32','33','37','38','49','50','52']
+        self.folderlist = [] # not include data from droneData
         if extend:
             for k in range(101,1040):
                 self.folderlist.append(str(k))
@@ -126,6 +127,10 @@ class FolderUnlabelDataset(Dataset):
         if epiInd>0:
             idx -= self.episodeNum[epiInd-1]
 
+        # random fliping
+        flipping = False
+        if self.aug and random.random()>0.5:
+            flipping = True
         # print epiInd, idx
         imgseq = []
         for k in range(self.batch):
@@ -135,7 +140,7 @@ class FolderUnlabelDataset(Dataset):
                 img = im_hsv_augmentation(img)
                 img = im_crop(img)
 
-            outimg = im_scale_norm_pad(img, outsize=self.imgsize, mean=self.mean, std=self.std, down_reso=True)
+            outimg = im_scale_norm_pad(img, outsize=self.imgsize, mean=self.mean, std=self.std, down_reso=True, flip=flipping)
 
             imgseq.append(outimg)
 
@@ -145,9 +150,9 @@ if __name__=='__main__':
     # test 
     np.set_printoptions(precision=4)
 
-    unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 32, data_aug=True, include_all=True)#,datafile='duke_unlabeldata.pkl')
+    # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/dirimg',batch = 24, extend=True, data_aug=True)#,datafile='duke_unlabeldata.pkl')
     # unlabelset = FolderUnlabelDataset(batch=24, data_aug=True, extend=True, datafile='drone_ucf_unlabeldata.pkl')
-    # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 24, data_aug=True, include_all=True)
+    unlabelset = FolderUnlabelDataset(imgdir='/home/wenshan/headingdata/DukeMCMT/heading',batch = 24, data_aug=True, include_all=True)
     print len(unlabelset)
     for k in range(1):
         imgseq = unlabelset[k*1000]

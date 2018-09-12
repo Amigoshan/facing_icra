@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from utils import im_scale_norm_pad, seq_show, im_crop, im_hsv_augmentation, put_arrow, seq_show_with_arrow
 import pandas as pd
 
-import matplotlib.pyplot as plt
+import random
 
 class TrackingLabelDataset(Dataset):
 
@@ -54,6 +54,12 @@ class TrackingLabelDataset(Dataset):
         label = np.array([direction_angle_sin, direction_angle_cos], dtype=np.float32)
         img = cv2.imread(img_name)
 
+        # random fliping
+        flipping = False
+        if self.aug and random.random()>0.5:
+            flipping = True
+            label[1] = -label[1]
+
         if img is None:
             print 'error image:', img_name
             return
@@ -61,7 +67,7 @@ class TrackingLabelDataset(Dataset):
             img = im_hsv_augmentation(img, Hscale = 10,Sscale = 60, Vscale = 60)
             img = im_crop(img, maxscale=self.maxscale)
 
-        outimg = im_scale_norm_pad(img, outsize=self.imgsize, mean=self.mean, std=self.std, down_reso=True)
+        outimg = im_scale_norm_pad(img, outsize=self.imgsize, mean=self.mean, std=self.std, down_reso=True, flip=flipping)
 
         return {'img':outimg, 'label':label}
 

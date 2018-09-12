@@ -12,7 +12,7 @@ from utils import im_scale_norm_pad, img_denormalize, seq_show_with_arrow, im_hs
 import random
 import matplotlib.pyplot as plt
 
-import pickle
+import random
 
 class DukeSeqLabelDataset(Dataset):
 
@@ -33,7 +33,7 @@ class DukeSeqLabelDataset(Dataset):
 
         sequencelist = []
         imgdir = split(labelfile)[0]
-        imgdir = join(imgdir,'heading') # a subdirectory containing the images
+        #imgdir = join(imgdir,'heading') # a subdirectory containing the images
         with open(labelfile,'r') as f:
             lines = f.readlines()
 
@@ -41,7 +41,7 @@ class DukeSeqLabelDataset(Dataset):
         lastcam = -1
         for line in lines:
             [img_name, angle] = line.strip().split(' ')
-            frameid = img_name.strip().split('_')[2][5:]
+            frameid = img_name.strip().split('/')[-1].split('_')[1][5:]
             try:
                 frameid = int(frameid)
             except:
@@ -89,6 +89,11 @@ class DukeSeqLabelDataset(Dataset):
         if epiInd>0:
             idx -= self.episodeNum[epiInd-1]
 
+        # random fliping
+        flipping = False
+        if self.aug and random.random()>0.5:
+            flipping = True
+
         # print epiInd, idx
         imgseq = []
         labelseq = []
@@ -102,8 +107,9 @@ class DukeSeqLabelDataset(Dataset):
             if self.aug:
                 img = im_hsv_augmentation(img)
                 img = im_crop(img)
-
-            outimg = im_scale_norm_pad(img, outsize=self.imgsize, mean=self.mean, std=self.std, down_reso=True)
+                if flipping:
+                    label[1] = - label[1]
+            outimg = im_scale_norm_pad(img, outsize=self.imgsize, mean=self.mean, std=self.std, down_reso=True, flip=flipping)
 
             imgseq.append(outimg)
             labelseq.append(label)
@@ -139,7 +145,7 @@ if __name__=='__main__':
     np.set_printoptions(precision=4)
 
     # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 32, data_aug=True, include_all=True,datafile='duke_unlabeldata.pkl')
-    unlabelset = DukeSeqLabelDataset(batch=24, data_aug=True)
+    unlabelset = DukeSeqLabelDataset(labelfile='/datadrive/person/DukeMTMC/test_heading_gt.txt', batch=24, data_aug=True)
     # unlabelset = FolderUnlabelDataset(imgdir='/datadrive/person/DukeMTMC/heading',batch = 24, data_aug=True, include_all=True)
     print len(unlabelset)
     # import ipdb; ipdb.set_trace()

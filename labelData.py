@@ -1,21 +1,24 @@
 # Combine two labeled dataset together
 
 from trackingLabelData import TrackingLabelDataset
+from folderLabelData import FolderLabelDataset
 from torch.utils.data import Dataset, DataLoader
-from utils import im_scale_norm_pad, img_denormalize, seq_show, im_crop, im_hsv_augmentation, put_arrow, seq_show_with_arrow
+from utils import seq_show_with_arrow
 
 class LabelDataset(Dataset):
 
-    def __init__(self, balence=False):
-        self.balencelist = [2,1]
+    def __init__(self, balence=False, mean=[0,0,0], std=[1,1,1]):
+        self.balencelist = [2,1,20]
         self.balence = balence
 
         self.datasetlist = []
-        virat = TrackingLabelDataset(data_aug = True, maxscale=0.1) # 69680
-        duke = TrackingLabelDataset(filename='trainval_duke.txt', data_aug=True) # 225426
+        virat = TrackingLabelDataset(data_aug = True, maxscale=0.1,mean=mean,std=std) # 69680
+        duke = TrackingLabelDataset(filename='/datadrive/person/DukeMTMC/trainval_duke.txt', data_aug=True,mean=mean,std=std) # 225426
+        handlabel = FolderLabelDataset(imgdir='/home/wenshan/headingdata/label', data_aug=True,mean=mean,std=std) # 1201
 
         self.datasetlist.append(virat)
         self.datasetlist.append(duke)
+        self.datasetlist.append(handlabel)
 
         self.datanumlist = []
         for k, dataset in enumerate(self.datasetlist):

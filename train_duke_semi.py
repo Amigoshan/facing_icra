@@ -6,37 +6,42 @@ import numpy as np
 from os.path import join
 import random
 
-from utils import loadPretrain2, loadPretrain
+from utils import loadPretrain2, loadPretrain, seq_show_with_arrow
 from labelData import LabelDataset
-from folderUnlabelData import FolderUnlabelDataset
-from trackingLabelData import TrackingLabelDataset
+from unlabelData import UnlabelDataset
+from folderLabelData import FolderLabelDataset
+from dukeSeqLabelData import DukeSeqLabelDataset
 from MobileReg import MobileReg
 
 import sys
 sys.path.append('../WorkFlow')
 from workflow import WorkFlow
 
-exp_prefix = '1_1_'
+exp_prefix = 'vis_1_3_'
 Batch = 128
 UnlabelBatch = 24 #32
 Lr = 0.0005
-Trainstep = 50000
-Lamb = 0.05
+Trainstep = 20000
+Lamb = 0.1
 Thresh = 0.005
 
-
 Snapshot = 5000 # do a snapshot every Snapshot steps
-TestIter = 100 # do a testing every TestIter steps
-ShowIter = 50 # print to screen
+TestIter = 10 # do a testing every TestIter steps
+ShowIter = 1 # print to screen
 
-datasetdir = '/datadrive/datasets'
-trainfile = 'trainval_duke.txt'
+mean=[0.485, 0.456, 0.406]
+std=[0.229, 0.224, 0.225]
+
+trainlabelfile = '/datadrive/person/DukeMTMC/trainval_duke.txt' # hardcode in labelData
+testlabelfile = '/datadrive/person/DukeMTMC/test_heading_gt.txt'
+unlabelfile = 'duke_unlabeldata.pkl'
 saveModelName = 'facing'
 
 pre_mobile_model = 'pretrained_models/mobilenet_v1_0.50_224.pth'
-LoadPreMobile = True
-pre_model = ''
-LoadPreTrain = False
+LoadPreMobile = False
+pre_model = 'models/1_3_facing_20000.pkl'
+LoadPreTrain = True
+TestOnly = True
 
 LogParamList= ['Batch', 'UnlabelBatch', 'Lr', 'Trainstep', 'Lamb', 'Thresh'] # these params will be log into the file
 
@@ -56,33 +61,36 @@ class MyWF(WorkFlow.WorkFlow):
         self.device = 'cuda'
 
         # Dataloader for the training and testing
-        labeldataset = LabelDataset(balence=True)
-        unlabeldataset = FolderUnlabelDataset(batch = UnlabelBatch, data_aug=True, datafile='duke_unlabeldata.pkl')
-        testdataset = TrackingLabelDataset(filename='test_duke.txt', data_aug=True)
-        self.train_loader = DataLoader(labeldataset, batch_size=Batch, shuffle=True)
-        self.train_unlabel_loader = DataLoader(unlabeldataset, batch_size=1, shuffle=True)
-        self.test_loader = torch.utils.data.DataLoader(testdataset, batch_size=Batch, shuffle=True)
+        labeldataset = LabelDataset(balence=True,mean=mean,std=std)
+        unlabeldataset = UnlabelDataset(batch=UnlabelBatch, balence=True,mean=mean,std=std)
+        # testdataset = DukeSeqLabelDataset(labelfile = testlabelfile, batch = UnlabelBatch, data_aug=True, mean=mean,std=std)
+        testdataset = FolderLabelDataset(imgdir='/home/wenshan/headingdata/val_drone', data_aug=False,mean=mean,std=std)
+        self.train_loader = DataLoader(labeldataset, batch_size=Batch, shuffle=True, num_workers=6)
+        self.train_unlabel_loader = DataLoader(unlabeldataset, batch_size=1, shuffle=True, num_workers=4)
+        self.test_loader = torch.utils.data.DataLoader(testdataset, batch_size=20, shuffle=True, num_workers=1)
 
         self.train_data_iter = iter(self.train_loader)
-        self.train_unlabeld_iter = iter(self.train_unlabeld_loader)
+        self.train_unlabeld_iter = iter(self.train_unlabel_loader)
         self.test_data_iter = iter(self.test_loader)
 
         self.model = MobileReg()
         if LoadPreMobile:
             self.model.load_pretrained_pth(pre_mobile_model)
+        if LoadPreTrain:
+            loadPretrain(self.model, pre_model)
         self.optimizer = optim.Adam(self.model.parameters(), lr=Lr)
         self.criterion = nn.MSELoss()
 
         self.AV['loss'].avgWidth = 100 # there's a default plotter for 'loss'
         self.add_accumulated_value('label_loss', 100) # second param is the number of average data
         self.add_accumulated_value('unlabel_loss', 100) 
-        self.add_accumulated_value('test_loss')
-        self.add_accumulated_value('test_label')
-        self.add_accumulated_value('test_unlabel')
+        self.add_accumulated_value('test_loss', 10)
+        self.add_accumulated_value('test_label', 10)
+        self.add_accumulated_value('test_unlabel' ,10)
 
-        self.AVP.append(WorkFlow.VisdomLinePlotter("total_loss", self.AV, ['loss', 'test_loss'], [True, False])) # False: no average line
-        self.AVP.append(WorkFlow.VisdomLinePlotter("label_loss", self.AV, ['label_loss', 'test_label'], [True, False]))
-        self.AVP.append(WorkFlow.VisdomLinePlotter("unlabel_loss", self.AV, ['unlabel_loss', 'test_unlabel'], [True, False]))
+        self.AVP.append(WorkFlow.VisdomLinePlotter("total_loss", self.AV, ['loss', 'test_loss'], [True, True])) 
+        self.AVP.append(WorkFlow.VisdomLinePlotter("label_loss", self.AV, ['label_loss', 'test_label'], [True, True]))
+        self.AVP.append(WorkFlow.VisdomLinePlotter("unlabel_loss", self.AV, ['unlabel_loss', 'test_unlabel'], [True, True]))
 
     def initialize(self, device):
         super(MyWF, self).initialize()
@@ -135,8 +143,20 @@ class MyWF(WorkFlow.WorkFlow):
 
         return loss_label
 
+    def test_label(self, val_sample, visualize):
+        inputImgs = val_sample['img'].to(self.device)
+        labels = val_sample['label'].to(self.device)
 
-    def test_label_unlabel(val_sample, net, criterion):
+        output = self.model(inputImgs)
+        loss_label = self.criterion(output, labels)
+
+        # import ipdb;ipdb.set_trace()
+        if visualize:
+            print loss_label.item()
+            seq_show_with_arrow(inputImgs.cpu().numpy(),output.detach().cpu().numpy(), scale=0.8, mean=mean, std=std)
+        return loss_label
+
+    def test_label_unlabel(self, val_sample, visualize):
         inputImgs = val_sample['imgseq'].squeeze().to(self.device)
         labels = val_sample['labelseq'].squeeze().to(self.device)
 
@@ -145,6 +165,10 @@ class MyWF(WorkFlow.WorkFlow):
         loss_unlabel = self.unlabel_loss(output)
         loss = loss_label + Lamb * loss_unlabel
 
+        # import ipdb;ipdb.set_trace()
+        if visualize:
+            seq_show_with_arrow(inputImgs.cpu().numpy(),output.detach().cpu().numpy(), scale=0.8, mean=mean, std=std)
+            print loss.item(), loss_label.item(), loss_unlabel.item()
         return loss, loss_label, loss_unlabel 
 
 
@@ -191,7 +215,7 @@ class MyWF(WorkFlow.WorkFlow):
             self.draw_accumulated_values()
             self.save_model(self.model, saveModelName+'_'+str(self.countTrain))
 
-    def test(self):
+    def test(self, visualize=False):
         super(MyWF, self).test()
 
         self.model.eval()
@@ -202,11 +226,12 @@ class MyWF(WorkFlow.WorkFlow):
             self.test_data_iter = iter(self.test_loader)
             sample = self.test_data_iter.next()
 
-        loss, loss_label, loss_unlabel = self.test_label_unlabel(sample)
+        # loss, loss_label, loss_unlabel = self.test_label_unlabel(sample, visualize)
+        loss_label = self.test_label(sample, visualize)
 
-        self.AV['test_loss'].push_back(loss.item())
-        self.AV['test_label'].push_back(label_loss.item())
-        self.AV['test_unlabel'].push_back(unlabel_loss.item())
+        # self.AV['test_loss'].push_back(loss.item(), self.countTrain)
+        self.AV['test_label'].push_back(loss_label.item(), self.countTrain)
+        # self.AV['test_unlabel'].push_back(loss_unlabel.item(), self.countTrain)
 
     def finalize(self):
         super(MyWF, self).finalize()
@@ -245,10 +270,13 @@ if __name__ == "__main__":
         while True:
             
 
-            wf.train()
+            if TestOnly:
+                wf.test(True)
+            else:
+                wf.train()
 
-            if wf.countTrain % TestIter == 0:
-                wf.test()
+                if wf.countTrain % TestIter == 0:
+                    wf.test()
 
             if (wf.countTrain>=Trainstep):
                 break
