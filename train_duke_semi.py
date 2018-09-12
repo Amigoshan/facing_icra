@@ -5,11 +5,13 @@ from torch.utils.data import DataLoader
 import numpy as np
 from os.path import join
 import random
+from math import pi
 
 from utils import loadPretrain2, loadPretrain, seq_show_with_arrow
 from labelData import LabelDataset
 from unlabelData import UnlabelDataset
 from folderLabelData import FolderLabelDataset
+from folderUnlabelData import FolderUnlabelDataset
 from dukeSeqLabelData import DukeSeqLabelDataset
 from MobileReg import MobileReg
 
@@ -24,6 +26,7 @@ Lr = 0.0005
 Trainstep = 20000
 Lamb = 0.1
 Thresh = 0.005
+TestBatch = 50
 
 Snapshot = 5000 # do a snapshot every Snapshot steps
 TestIter = 10 # do a testing every TestIter steps
@@ -39,9 +42,9 @@ saveModelName = 'facing'
 
 pre_mobile_model = 'pretrained_models/mobilenet_v1_0.50_224.pth'
 LoadPreMobile = False
-pre_model = 'models/1_3_facing_20000.pkl'
+pre_model = 'models/1_2_facing_20000.pkl'
 LoadPreTrain = True
-TestOnly = True
+TestType = 2 # 0:not test, 1: labeled sequence, 2: labeled folder, 3: unlabeled sequence
 
 LogParamList= ['Batch', 'UnlabelBatch', 'Lr', 'Trainstep', 'Lamb', 'Thresh'] # these params will be log into the file
 
@@ -59,15 +62,23 @@ class MyWF(WorkFlow.WorkFlow):
         self.unlabelEpoch = 0
         self.countTrain = 0
         self.device = 'cuda'
+        global TestBatch
 
         # Dataloader for the training and testing
         labeldataset = LabelDataset(balence=True,mean=mean,std=std)
         unlabeldataset = UnlabelDataset(batch=UnlabelBatch, balence=True,mean=mean,std=std)
-        # testdataset = DukeSeqLabelDataset(labelfile = testlabelfile, batch = UnlabelBatch, data_aug=True, mean=mean,std=std)
-        testdataset = FolderLabelDataset(imgdir='/home/wenshan/headingdata/val_drone', data_aug=False,mean=mean,std=std)
         self.train_loader = DataLoader(labeldataset, batch_size=Batch, shuffle=True, num_workers=6)
         self.train_unlabel_loader = DataLoader(unlabeldataset, batch_size=1, shuffle=True, num_workers=4)
-        self.test_loader = torch.utils.data.DataLoader(testdataset, batch_size=20, shuffle=True, num_workers=1)
+
+        if TestType==1 or TestType==0:
+            testdataset = DukeSeqLabelDataset(labelfile = testlabelfile, batch = UnlabelBatch, data_aug=True, mean=mean,std=std)
+            TestBatch = 1
+        elif TestType==2:
+            testdataset = FolderLabelDataset(imgdir='/home/wenshan/headingdata/val_drone', data_aug=False,mean=mean,std=std)
+        elif TestType==3:
+            testdataset = FolderUnlabelDataset(imgdir='/datadrive/exp_bags/20180811_gascola', data_aug=False, include_all=True, mean=mean,std=std)
+            TestBatch = 1
+        self.test_loader = torch.utils.data.DataLoader(testdataset, batch_size=TestBatch, shuffle=True, num_workers=1)
 
         self.train_data_iter = iter(self.train_loader)
         self.train_unlabeld_iter = iter(self.train_unlabel_loader)
@@ -152,9 +163,23 @@ class MyWF(WorkFlow.WorkFlow):
 
         # import ipdb;ipdb.set_trace()
         if visualize:
-            print loss_label.item()
+            output_np = output.detach().cpu().numpy()
+            labels_np = labels.cpu().numpy()
+            angle_error = self.angle_loss(output_np, labels_np)
+            cls_accuracy = float(self.accuracy_cls(output_np, labels_np))/labels_np.shape[0]
+            print 'label-loss %.4f, angle diff %.4f, accuracy %.4f' % (loss_label.item(), angle_error, cls_accuracy)
             seq_show_with_arrow(inputImgs.cpu().numpy(),output.detach().cpu().numpy(), scale=0.8, mean=mean, std=std)
         return loss_label
+
+    def test_unlabel(self, val_sample, visualize):
+        inputValue = val_sample.squeeze().to(self.device)
+        output = self.model(inputValue)
+        loss_unlabel = self.unlabel_loss(output)
+
+        if visualize:
+            print loss_unlabel.item()
+            seq_show_with_arrow(inputValue.cpu().numpy(),output.detach().cpu().numpy(), scale=0.8, mean=mean, std=std)
+        return loss_unlabel
 
     def test_label_unlabel(self, val_sample, visualize):
         inputImgs = val_sample['imgseq'].squeeze().to(self.device)
@@ -167,10 +192,46 @@ class MyWF(WorkFlow.WorkFlow):
 
         # import ipdb;ipdb.set_trace()
         if visualize:
-            seq_show_with_arrow(inputImgs.cpu().numpy(),output.detach().cpu().numpy(), scale=0.8, mean=mean, std=std)
-            print loss.item(), loss_label.item(), loss_unlabel.item()
+            output_np = output.detach().cpu().numpy()
+            labels_np = labels.cpu().numpy()
+            angle_error = self.angle_loss(output_np, labels_np)
+            cls_accuracy = float(self.accuracy_cls(output_np, labels_np))/labels_np.shape[0]
+            print '(loss %.4f, label-loss %.4f, unlabel-loss %.4f) angle diff %.4f, accuracy %.4f' % (loss.item(), 
+                loss_label.item(), loss_unlabel.item(), angle_error, cls_accuracy)
+            seq_show_with_arrow(inputImgs.cpu().numpy(),output_np, scale=0.8, mean=mean, std=std)
         return loss, loss_label, loss_unlabel 
 
+
+    def angle_diff(self, outputs, labels):
+        output_angle = np.arctan2(outputs[:,0], outputs[:,1])
+        label_angle = np.arctan2(labels[:,0], labels[:,1])
+        diff_angle = output_angle - label_angle
+        mask = diff_angle<-pi
+        diff_angle[mask] = diff_angle[mask]+2*pi
+        mask = diff_angle>pi
+        diff_angle[mask] = diff_angle[mask]-2*pi
+
+        # debug
+        print output_angle
+        print label_angle
+        print diff_angle
+        return diff_angle
+
+
+    def accuracy_cls(self, outputs, labels):
+        '''
+        outputs and labels is in numpy array type
+        '''
+        diff_angle = self.angle_diff(outputs, labels)
+        acc_angle = diff_angle < 0.3927 # 22.5 * pi / 180
+        return np.sum(acc_angle)
+
+    def angle_loss(self, outputs, labels):
+        '''
+        outputs and labels is in numpy array type
+        '''
+        diff_angle = self.angle_diff(outputs, labels)
+        return np.mean(np.abs(diff_angle))
 
     def train(self):
         super(MyWF, self).train()
@@ -226,12 +287,17 @@ class MyWF(WorkFlow.WorkFlow):
             self.test_data_iter = iter(self.test_loader)
             sample = self.test_data_iter.next()
 
-        # loss, loss_label, loss_unlabel = self.test_label_unlabel(sample, visualize)
-        loss_label = self.test_label(sample, visualize)
+        if TestType==1 or TestType==0: # labeled sequence
+            loss, loss_label, loss_unlabel = self.test_label_unlabel(sample, visualize)
+        elif TestType==2: # labeled folder
+            loss_label = self.test_label(sample, visualize)
+        elif TestType==3:
+            loss_unlabel = self.test_unlabel(sample, visualize)
 
-        # self.AV['test_loss'].push_back(loss.item(), self.countTrain)
-        self.AV['test_label'].push_back(loss_label.item(), self.countTrain)
-        # self.AV['test_unlabel'].push_back(loss_unlabel.item(), self.countTrain)
+        if TestType==0:
+            self.AV['test_loss'].push_back(loss.item(), self.countTrain)
+            self.AV['test_label'].push_back(loss_label.item(), self.countTrain)
+            self.AV['test_unlabel'].push_back(loss_unlabel.item(), self.countTrain)
 
     def finalize(self):
         super(MyWF, self).finalize()
@@ -270,7 +336,7 @@ if __name__ == "__main__":
         while True:
             
 
-            if TestOnly:
+            if TestType>0:
                 wf.test(True)
             else:
                 wf.train()

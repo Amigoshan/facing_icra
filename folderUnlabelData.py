@@ -49,6 +49,8 @@ class FolderUnlabelDataset(Dataset):
         for f_ind, foldername in enumerate(self.folderlist):
 
             folderpath = join(imgdir, foldername)
+            if not isdir(folderpath):
+                continue
 
             imglist = listdir(folderpath)
             imglist = sorted(imglist)
